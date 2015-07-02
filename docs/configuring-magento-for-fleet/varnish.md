@@ -28,3 +28,10 @@ Unless otherwise noted, these are the literal values that should be entered on t
   * Backend
     * Backend Host: **127.0.0.1**
     * Backend Port: **8080**
+
+### Custom Varnish Configuration
+
+If you are not using Turpentine and wish to load a custom Varnish Configuration file (VCL)
+You can place your configuration in `.fleet/varnish.vcl` in your code repository and it will be included when you create your release.
+
+By default Varnish will pass everything through to Magento.
