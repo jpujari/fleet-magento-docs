@@ -11,13 +11,18 @@ Taken from https://docs.anchor.net.au/system/fleet/Migrating-a-customer
 3. Should [fix the cookie domain problem](../configuring-magento-for-fleet/unset-cookie-domain.md) too
 
 
-Get your new Fleet
+Build the new Fleet
 ----
 
-This is an internal process:
+This is an internal process: [build the fleet](https://docs.anchor.net.au/system/fleet/Building-a-new-Fleet)
 
-1. [Create the fleet](https://docs.anchor.net.au/system/fleet/Building-a-new-Fleet)
-2. [Create the *prod* environment](https://docs.anchor.net.au/system/fleet/Create-a-new-environment)
+Collect the `deploy` user's pubkey (`~deploy/.ssh/id_rsa.pub`) and send it to
+the customer, instructing them to use it as a *deploy key* on Github/Bitbucket.
+Also give them the name of the fleet that you've created, so they can add the
+necessary webhook.
+
+At the same time, ask for the customer's SSH pubkey, so that we can add it to
+fleet and allow them to login to the aux box.
 
 
 Gitify your codebase
@@ -39,14 +44,19 @@ It goes roughly like:
 4. Install the deployment key into your repo, this will allow Fleet to grab a copy of your code when you deploy
 5. Add the post-receive hook to call the Fleet's aux box when you commit to the `fleet-deploy` branch
 
+Your git repo is now ready. Send your SSH public key to Anchor so that you can
+login to your Fleet via SSH, and also the URL of your Github/Bitbucket repo.
 
-Add Redis
+
+Create the prod environment
 ----
 
-At some point we need to [setup Redis for sessions and caching](../configuring-magento-for-fleet/configure-cache-and-sessions.md)
+This is an internal process: [create the *prod* environment](https://docs.anchor.net.au/system/fleet/Create-a-new-environment)
+
+Make sure to add their pubkey, and set the URL of their repo.
 
 
-Dump the DB
+Dump the existing DB
 ----
 
 Make sure all media is synced to the DB, you should've done this earlier. This means that images and other store assets are stored as blobs in there.
@@ -63,38 +73,47 @@ Put the dump on your workstation or somewhere convenient.
 Import the DB
 ----
 
-**XXX:** this will be easier once we have a nice DNS name for the admin box in the prod environment. At the moment you can use something like this, but it's fugly: `mysql.fleet-FLEETNAME-prod-chassis-1bj6v6kbcexqp.database.ancora.f.nchr.io`. Ideally you'd pass the DB dump to the aux box, then connect to RDS from there.
+These steps are covered here, briefly: [database setup](../configuring-magento-for-fleet/database-setup.md)
 
-2. Send the dump to the admin box in the target environment. For the sake of migration, we assume that you're using the first environment, *prod*.  
-  ```text
-  scp  magento-database-dump.sql.gz  <admin-public-ip>:/root/
-  ```
-3. Login to the new MySQL instance that belongs to the environment.  
-  ```text
-  ssh <admin-public-ip>
+1. The very first time, you'll need to login and create the database yourself.
+    There is no default setup for this.
 
-  mysql -h mysql -u master -p<30-char-DBPassword-stored-in-the-cloud-config-bucket> mysql
-  ```
-4. Setup the new database and grant privileges  
-  ```sql
-  CREATE DATABASE magento ;
+        ssh deploy@aux.FLEETNAME.f.nchr.io database connect prod --force
 
-  GRANT ALL PRIVILEGES ON magento.* TO 'magento' IDENTIFIED BY 'magento' WITH GRANT OPTION ;
-  FLUSH PRIVILEGES ;
-  \q
-  ```
-5. Disable binary logging on the RDS instance. This is technically optional, but improves performances particularly with large imports. In accordance with this [AWS guide](http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/MySQL.Procedural.Importing.html), we'll disable binary logging for the duration of the import.
-  1. Head to the AWS RDS console: https://console.aws.amazon.com/rds/home
-  2. Select *Instances* from the menu on the left, then find your environment's MySQL instance in the list
-  3. Instance Actions -> Modify
-  4. Set the *Backup Retention Period* to 0 days, and tick the *Apply Immediately* checkbox at the bottom
-  5. Click through and confirm your changes. You'll need to wait a bit for the changes to kick in, about 5-10min until the *DB Instance Status* on the dashboard changes from *Modifying* to *Available*.
-6. Import the dump  
-  ```shell
-  zcat magento-database-dump.sql.gz  |  perl -pe 's/\sDEFINER=`[^`]+`@`[^`]+`/ DEFINER=CURRENT_USER()/'  |  mysql -h mysql -u magento -pmagento magento
-  ```
-  Because MySQL is a pain in the arse, we have to mangle the SQL a bit so that triggers can be created successfully.
-7. Re-enable binary logging on the instance by following the same steps you used to disable logging, setting the Backup Retention Period back to 10 days (or whatever it was before you set it to 0).
+    There will be no feedback as you type each command. Enter the following
+    and terminate your input with ^D (Ctrl-D) followed by Enter. The commands
+    will then be executed.
+
+    Fill in the database name, username and password that your existing
+    Magento installation uses.
+
+        CREATE DATABASE magento_db;
+        GRANT ALL PRIVILEGES ON magento_db.* TO 'magento_user' IDENTIFIED BY 'long_and_complex_magento_password' WITH GRANT OPTION;
+        FLUSH PRIVILEGES;
+        \q
+
+2. Push the database dump into mysql:
+
+        zcat magento-database-dump.sql.gz  |  perl -pe 's/\sDEFINER=`[^`]+`@`[^`]+`/ DEFINER=CURRENT_USER()/'  |  ssh deploy@aux.FLEETNAME.f.nchr.io database connect prod magento_db --force
+
+    Because MySQL is a pain in the arse, we have to mangle the SQL a bit so that triggers can be created successfully.
+
+3. Tell Magento to use a custom admin url, as the Admin node is separate from your frontends.
+
+        echo "UPDATE core_config_data SET value = 'http://admin.prod.FLEETNAME.f.nchr.io/' WHERE path = 'admin/url/custom'" | ssh deploy@aux.FLEETNAME.f.nchr.io database connect prod magento --force
+        echo "UPDATE core_config_data SET value = '1' WHERE path = 'admin/url/use_custom'" | ssh deploy@aux.FLEETNAME.f.nchr.io database connect prod magento --force
+
+    Once you've imported your database, loaded and activated an initial release you'll be able to access Magento's admin panel at `https://admin.prod.FLEETNAME.f.nchr.io/admin/`.
+
+
+
+
+Add Redis
+----
+
+At some point we need to [setup Redis for sessions and caching](../configuring-magento-for-fleet/configure-cache-and-sessions.md)
+
+Make the edits to your git repo and commit them.
 
 
 Codebase and config
@@ -105,51 +124,58 @@ You put your code in a git repo earlier, right? Great! Let's patch the Magento c
 This assumes you already have Redis configured in Magento.
 
 1. Update `app/etc/local.xml` with the new parameters:  
-  ```diff
-  --- a/app/etc/local.xml
-  +++ b/app/etc/local.xml
-  @@ -40,7 +40,7 @@
-               </db>
-               <default_setup>
-                   <connection>
-  -                    <host><![CDATA[localhost]]></host>
-  +                    <host><![CDATA[mysql]]></host>
-                       <username><![CDATA[magento]]></username>
-                       <password><![CDATA[magento]]></password>
-                       <dbname><![CDATA[magento]]></dbname>
-  @@ -62,7 +62,7 @@
-         <cache>
-           <backend>Cm_Cache_Backend_Redis</backend>
-           <backend_options>
-  -          <server>localhost</server>
-  +          <server>redis-cache</server>
-             <port>6379</port>
-             <database>0</database>
-             <force_standalone>0</force_standalone>
-  @@ -75,7 +75,7 @@
-         </cache>
-         <session_save><![CDATA[db]]></session_save>
-         <redis_session>
-  -          <host>localhost</host>
-  +          <host>redis-session</host>
-             <port>6379</port>
-             <password></password>
-             <timeout>2.5</timeout>
-  ```
-2. Commit to the new branch (`fleet-deploy`), push to Bithub, which should trigger a release-build on the aux box.
+
+        --- a/app/etc/local.xml
+        +++ b/app/etc/local.xml
+        @@ -40,7 +40,7 @@
+                     </db>
+                     <default_setup>
+                         <connection>
+        -                    <host><![CDATA[localhost]]></host>
+        +                    <host><![CDATA[mysql]]></host>
+                             <username><![CDATA[magento]]></username>
+                             <password><![CDATA[magento]]></password>
+                             <dbname><![CDATA[magento]]></dbname>
+
+2. Commit to the new branch (`fleet-deploy`), push to Bithub, which should
+    trigger a release-build on the aux box. This will take about five minutes,
+    and you can confirm that the release is being built by running `fleet release list`.
 
 
 First deploy
 ----
 
-1. Login to the aux box
-2. `su - deploy`
-3. `fleet env list` to find the new RELEASE_ID
-4. `fleet env load prod $RELEASE_ID`
-5. Wait a little while
-6. `fleet env activate prod $RELEASE_ID`
-7. Wait a littler while
-8. Huge success!
+1. Find the new `RELEASE_ID` in the *name* column:
+
+        $ ssh deploy@aux.migrtest.f.nchr.io release list
+
+        name     status     modified                   message
+        -------  ---------  -------------------------  -----------
+        9b84481  AVAILABLE  2015-07-30 03:45:32+00:00  First build
+
+2. Load the release into the *prod* environment:
+
+        $ ssh deploy@aux.migrtest.f.nchr.io env load prod 9b84481
+
+3. Wait a little while, when it's finished the release will be loaded:
+
+        $ ssh deploy@aux.migrtest.f.nchr.io env list
+        name    status      release    releases  certificate    created                    updated
+        ------  --------  ---------  ----------  -------------  -------------------------  -------------------------
+        prod    RUNNING                       1  self-signed    2015-07-30 01:00:12+00:00  2015-07-30 01:20:27+00:00
+
+4. Activate the release in the prod environment:
+
+        $ ssh deploy@aux.migrtest.f.nchr.io env activate prod 9b84481
+
+5. Wait a littler while
+
+        $ ssh deploy@aux.migrtest.f.nchr.io env list
+        name    status    release      releases  certificate    created                    updated
+        ------  --------  ---------  ----------  -------------  -------------------------  -------------------------
+        prod    UPDATING  9b84481             1  self-signed    2015-07-30 01:00:12+00:00  2015-07-30 04:53:54+00:00
+
+    When the status changes from UPDATING to RUNNING, your Fleet is now online.
 
 
 View and testing
@@ -157,19 +183,22 @@ View and testing
 
 Hopefully your release was successful. You should now you have a couple of useful DNS names for testing and access:
 
-* admin.fleet-ancora-prod.ancora.f.nchr.io
-* www.fleet-ancora-prod.ancora.f.nchr.io
+* [http://admin.prod.migrtest.f.nchr.io/admin/](http://admin.prod.migrtest.f.nchr.io/admin/)
+* [http://www.prod.migrtest.f.nchr.io/](http://www.prod.migrtest.f.nchr.io/)
+
+### Troubleshooting
+
+If things aren't working as expected, check the following:
+
+* Getting redirected to the canonical domain: If you originally configured your Magento store to use HTTPS URLs, you will need to access the testing URLs with `https://` instead of http.
+
+* Your images and static assets probably aren't working: you'll need to figure out what's going on here, perhaps your media wasn't synced to the database.
 
 
-### Debone the configs
+NOT YET FINISHED
+----
 
-* Your images and static assets probably aren't working, you'll need to figure out what's going on there.
-
-
-
-
-
-
+**Need to continue from here to finish the migration and check that the whole process is sane.**
 
 
 Cloudflare integration
