@@ -194,6 +194,8 @@ If things aren't working as expected, check the following:
 
 * Your images and static assets probably aren't working: you'll need to figure out what's going on here, perhaps your media wasn't synced to the database.
 
+* Can't login to the admin interface: You need to have set a custom hostname for the admin node, but you probably don't need a custom admin *path*. This can cause trouble because your login goes to `/index.php/admin/`, which won't be detected as an admin login attempt, and you'll get kicked to the canonical base URL. So probably disable the use of custom admin path.
+
 
 NOT YET FINISHED
 ----
