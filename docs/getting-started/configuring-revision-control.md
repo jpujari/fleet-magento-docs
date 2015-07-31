@@ -70,7 +70,8 @@ Anchor will have provided you with a deployment key when you created your Fleet.
  2. Add Webhook
  3. Payload URL: ``http://aux.{fleet-id}.f.nchr.io:5000/``
  4. Content type: application/json
- 5. Select: "Just the push event."
- 6. **Add webhook**
+ 5. Leave the Secret field blank
+ 6. Select: "Just the push event."
+ 7. **Add webhook**
 
 ![](/getting-started/post-hook-github.png)
