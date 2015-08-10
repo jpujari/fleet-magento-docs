@@ -33,3 +33,10 @@ $ fleet log view <environment> <release> <group> [--start-time YYYY-MM-DDTHH:MM:
 $ fleet log view prod 5d5350b apache-000-deploy-access
 ...
 ```
+
+Some logs cover an entire environment or even an entire fleet. You can view these logs by specifying only the relevant parameters:
+
+```
+$ fleet log view <environment> <group> [--start-time YYYY-MM-DDTHH:MM:SS+ZZZZ] [--end-time YYYY-MM-DDTHH:MM:SS+ZZZZ]
+...
+```
